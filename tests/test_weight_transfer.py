@@ -7,7 +7,7 @@ import slime.utils.external_utils.command_utils as U
 
 MODEL_NAME = "Qwen3-4B" # model wo experts, model w experts, big model like qwen235b
 MODEL_TYPE = "qwen3-4B"
-
+GPUS_PER_NODE = 8 
 # For h100 80g * 8:
 # training gpu cannot be only 1 because of oom
 
@@ -19,7 +19,7 @@ class ScriptArgs(U.ExecuteTrainConfig):
     # tuning training/rollout gpus: --num-train-gpus 2 --training-tp-size 2 --num-rollout-gpus 4 --rollout-tp-size 4
     # enable different Protocol By: PROTOCOL=NCCL
     # docker: xinji1/slime_rdma:rdma in condor
-
+    # multi-nodes: only tested under 2 nodes setting, training-gpus should be exactly equal to  rollout-gpus
     # TODO: Right now ep=pp=1
     
     num_train_gpus: int = 1 # 1, 2, 4
@@ -27,26 +27,45 @@ class ScriptArgs(U.ExecuteTrainConfig):
     # training/rollout parallel
     training_tp_size: int = 1 #  1, 2, 4
     rollout_tp_size: int = 1 #  1, 2, 4
-    
-
+    is_multinodes: bool = False
+    is_head_node: bool = True
+    head_node_ip: str | None = None
+    node_rank: int = 0
+    nnodes: int = 1 
     # TODO:
     # parallelism: ep, pp
-    # multi-nodes
+    
     # check actor num nodes > 1
     # better performance
-
-
 
 def prepare(args: ScriptArgs):
     U.exec_command("mkdir -p /root/models /root/datasets")
     U.exec_command("hf download Qwen/Qwen3-4B --local-dir /root/models/Qwen3-4B")
     U.hf_download_dataset("zhuzilin/dapo-math-17k")
     num_gpus = args.num_train_gpus + args.num_rollout_gpus
-    U.convert_checkpoint(model_name=MODEL_NAME, megatron_model_type=MODEL_TYPE, num_gpus_per_node=num_gpus)
+    if not args.is_multinodes:
+        
+        U.convert_checkpoint(model_name=MODEL_NAME, megatron_model_type=MODEL_TYPE, num_gpus_per_node=num_gpus)
+    else:
+        if args.num_train_gpus > GPUS_PER_NODE:
+            assert args.num_train_gpus % GPUS_PER_NODE == 0, "num_train_gpus must be multiple of GPUS_PER_NODE" 
+        # Convert training/rollout nodes separately
+        assert args.num_train_gpus % args.num_rollout_gpus == 0 or args.num_rollout_gpus % args.num_train_gpus == 0 
+        U.convert_checkpoint(
+            model_name=MODEL_NAME, megatron_model_type=MODEL_TYPE, 
+            num_gpus_per_node= min(GPUS_PER_NODE, min(args.num_rollout_gpus, args.num_train_gpus) ),
+            multinode=True,
+            master_addr=args.head_node_ip,
+            nnodes=args.nnodes,
+            node_rank=args.node_rank,
+        )
 
 
 def execute(args: ScriptArgs):
-    num_gpus = args.num_train_gpus + args.num_rollout_gpus
+    if not args.is_multinodes:
+        num_gpus = args.num_train_gpus + args.num_rollout_gpus
+    else:
+        num_gpus= min(GPUS_PER_NODE, min(args.num_rollout_gpus, args.num_train_gpus))
     ckpt_args = f"--hf-checkpoint /root/models/{MODEL_NAME}/ " f"--ref-load /root/{MODEL_NAME}_torch_dist "
 
     rollout_args = (

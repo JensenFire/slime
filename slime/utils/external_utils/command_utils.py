@@ -26,6 +26,10 @@ def convert_checkpoint(
     extra_args: str = "",
     dir_dst: str = "/root",
     hf_checkpoint: str | None = None,
+    master_addr: str | None = None,
+    nnodes: int = 1,
+    node_rank: int = 0,
+
 ):
     hf_checkpoint = hf_checkpoint or f"/root/models/{model_name}"
 
@@ -37,14 +41,15 @@ def convert_checkpoint(
 
     multinode_args = ""
     if multinode:
-        # This variable can be provided via:
-        # `export SLURM_JOB_HOSTNAMES=$(scontrol show hostnames "$SLURM_JOB_NODELIST")`
-        print(f"{os.environ.get('SLURM_JOB_HOSTNAMES')=} {os.environ.get('SLURM_NODEID')=}")
-        job_hostnames = os.environ["SLURM_JOB_HOSTNAMES"].strip().split("\n")
-        master_addr = job_hostnames[0]
-        nnodes = len(job_hostnames)
-        node_rank = int(os.environ["SLURM_NODEID"])
-
+        if master_addr is None:
+            # This variable can be provided via:
+            # `export SLURM_JOB_HOSTNAMES=$(scontrol show hostnames "$SLURM_JOB_NODELIST")`
+            print(f"{os.environ.get('SLURM_JOB_HOSTNAMES')=} {os.environ.get('SLURM_NODEID')=}")
+            job_hostnames = os.environ["SLURM_JOB_HOSTNAMES"].strip().split("\n")
+            master_addr = job_hostnames[0]
+            nnodes = len(job_hostnames)
+            node_rank = int(os.environ["SLURM_NODEID"])
+        
         multinode_args = (
             f"--master-addr {master_addr} " "--master-port 23456 " f"--nnodes={nnodes} " f"--node-rank {node_rank} "
         )
@@ -98,6 +103,7 @@ def execute_train(
     before_ray_job_submit=None,
     extra_env_vars=None,
     config: ExecuteTrainConfig | None = None,
+    
 ):
     if extra_env_vars is None:
         extra_env_vars = {}
