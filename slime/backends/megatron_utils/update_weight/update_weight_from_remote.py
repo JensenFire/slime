@@ -157,7 +157,7 @@ class UpdateWeightFromRemote:
         """
         # NOTE: all gather need extra buffer for
 
-        with timer(f"non_expert_all_tp_gather_source{self._is_source}"):
+        with timer(f"non_expert_all_tp_gather_source{self._is_source}", log_info=False):
             param = all_gather_param(name, param)
         if not self._is_source:
             return
@@ -181,7 +181,7 @@ class UpdateWeightFromRemote:
         """
         Expert: gather TP → rm pad → buffer. EP gather + HF deferred. Threshold × EP size.
         """
-        with timer(f"expert_all_gather_name_param_tp_gather"):
+        with timer(f"expert_all_gather_name_param_tp_gather", log_info=False):
             param = all_gather_param(name, param)
 
         param_size = param.numel() * param.element_size()
@@ -201,7 +201,7 @@ class UpdateWeightFromRemote:
         """
         Gather EP → HF → broadcast. Clears buffer.
         """
-        with timer(f"expert_all_gather_name_param_ep_gather_source{self._is_source}"):
+        with timer(f"expert_all_gather_name_param_ep_gather_source_{self._is_source}", log_info=False):
             names = [name for name, _ in named_tensors]
             all_names = [None] * mpu.get_expert_model_parallel_world_size()
             dist.all_gather_object(all_names, names, group=mpu.get_expert_model_parallel_group())
