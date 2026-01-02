@@ -3,8 +3,8 @@
 Script to consolidate consecutive duplicate timer entries in slime timer logs.
 Handles multiple types of gather operations by summing their latencies:
 - non_expert_all_tp_gather_source*
-- expert_all_gather_name_param_tp_gather*
-- expert_all_gather_name_param_ep_gather_source*
+- expert_all_gather_name_param_tp_gather* and expert_all_gather_name_param_ep_gather_source*
+  (these two are treated as the same group and squashed together)
 """
 
 import re
@@ -24,18 +24,33 @@ def parse_timer_line(line: str) -> Tuple[str, float]:
         raise ValueError(f"Unable to parse timer line: {line}")
 
 
+def get_timer_group(timer_name: str) -> str | None:
+    """
+    Get the consolidation group for a timer name.
+    Returns the group name if the timer should be consolidated, None otherwise.
+    Timers in the same group will be squashed together.
+    """
+    # Group 1: non_expert_all_tp_gather_source (standalone group)
+    if timer_name.startswith('non_expert_all_tp_gather_source'):
+        return 'non_expert_all_tp_gather_source'
+
+    # Group 2: expert param gather operations (tp_gather and ep_gather treated as same)
+    expert_gather_patterns = [
+        'expert_all_gather_name_param_tp_gather',
+        'expert_all_gather_name_param_ep_gather_source'
+    ]
+    if any(timer_name.startswith(pattern) for pattern in expert_gather_patterns):
+        return 'expert_all_gather_name_param_gather'
+
+    return None
+
+
 def is_consolidatable_timer(timer_name: str) -> bool:
     """
     Check if a timer name should be consolidated with consecutive identical entries.
     Returns True for gather operation timers that tend to have many consecutive entries.
     """
-    consolidatable_patterns = [
-        'non_expert_all_tp_gather_source',
-        'expert_all_gather_name_param_tp_gather',
-        'expert_all_gather_name_param_ep_gather_source'
-    ]
-
-    return any(timer_name.startswith(pattern) for pattern in consolidatable_patterns)
+    return get_timer_group(timer_name) is not None
 
 
 def format_timer_line(timer_name: str, elapsed_time: float) -> str:
@@ -79,11 +94,11 @@ def consolidate_timer_log(input_file: str, output_file: str) -> None:
             continue
 
         # Check if this is a consolidatable timer entry
-        is_target_timer = is_consolidatable_timer(timer_name)
+        timer_group = get_timer_group(timer_name)
 
-        if is_target_timer:
-            if current_group_name == timer_name:
-                # Continue accumulating the same timer
+        if timer_group:
+            if current_group_name == timer_group:
+                # Continue accumulating the same group
                 current_group_total += elapsed_time
                 current_group_count += 1
             else:
@@ -95,7 +110,7 @@ def consolidate_timer_log(input_file: str, output_file: str) -> None:
                     )
 
                 # Start new group
-                current_group_name = timer_name
+                current_group_name = timer_group
                 current_group_total = elapsed_time
                 current_group_count = 1
         else:
