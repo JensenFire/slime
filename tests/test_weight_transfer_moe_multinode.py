@@ -29,25 +29,19 @@ class ScriptArgs(U.ExecuteTrainConfig):
     # training/rollout parallel
     training_tp_size: int = 8 #  1, 2, 4
     rollout_tp_size: int = 8 #  1, 2, 4
-
-
-
+    # profiling
     use_pytorch_profiler_update_weight: int = 0
     # multi-node settings
     is_multinodes: int = 0
-    is_head_node: int = 1
     head_node_ip: str | None = None
     node_rank: int = 0
     nnodes: int = 1 
-    hardware: Literal["H100", "GB200", "GB300"] = "H100"
     # TODO:
     # parallelism: ep, pp
-    
-    # check actor num nodes > 1
     # better performance
 
 def prepare(args: ScriptArgs):
-    if args.is_head_node == 1:
+    if args.node_rank == 0:
         U.exec_command("mkdir -p /root/models /root/datasets")
         U.exec_command(
             "hf download moonshotai/Moonlight-16B-A3B-Instruct --local-dir /root/models/Moonlight-16B-A3B-Instruct"
@@ -55,7 +49,6 @@ def prepare(args: ScriptArgs):
         U.hf_download_dataset("zhuzilin/dapo-math-17k")
     num_gpus = args.num_train_gpus + args.num_rollout_gpus
     if args.is_multinodes == 0:
-        
         U.convert_checkpoint(model_name=MODEL_NAME, megatron_model_type=MODEL_TYPE, num_gpus_per_node=num_gpus)
     else:
         # NOTE: currently when it comes to multinode case, all gpus of training/rollout should be multiple of GPUS_PER_NODE 
@@ -195,7 +188,7 @@ def execute(args: ScriptArgs):
         extra_env_vars={"RAY_DEBUG": "1",
                         **extra_env_vars,
                         },
-        is_head_node=bool(args.is_head_node == 1),
+        is_head_node=args.node_rank == 0,
         num_gpus = num_gpus,
     )
 
