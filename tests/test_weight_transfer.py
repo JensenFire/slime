@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from typing import Literal
-
 import typer
 
 import slime.utils.external_utils.command_utils as U
@@ -22,11 +21,14 @@ class ScriptArgs(U.ExecuteTrainConfig):
     # multi-nodes: only tested under 2 nodes setting, training-gpus should be exactly equal to  rollout-gpus
     # TODO: Right now ep=pp=1
     
-    num_train_gpus: int = 1 # 1, 2, 4
-    num_rollout_gpus: int = 1 # 1, 2, 4
+    num_train_gpus: int = 2 # 1, 2, 4
+    num_rollout_gpus: int = 2 # 1, 2, 4
     # training/rollout parallel
-    training_tp_size: int = 1 #  1, 2, 4
-    rollout_tp_size: int = 1 #  1, 2, 4
+    training_tp_size: int = 2 #  1, 2, 4
+    rollout_tp_size: int = 2 #  1, 2, 4
+
+    use_pytorch_profiler_update_weight: int = 0
+    # multi-node settings
     is_multinodes: bool = False
     is_head_node: bool = True
     head_node_ip: str | None = None
@@ -143,6 +145,17 @@ def execute(args: ScriptArgs):
     if args.mode == "rdma":
         misc_args += "--update-weight-transfer-mode rdma "
 
+    profile_args = ""
+    extra_env_vars = {}
+    if bool(args.use_pytorch_profiler_update_weight):
+        profile_args += (
+            # "--use-pytorch-profiler "
+            "--profile-step-start 1 "
+            "--profile-step-end 2 "
+            "--tensorboard-dir /root/profiler_logs/ "
+        )
+        extra_env_vars["UPDATE_WEIGHT_PROFILE"] = "1"
+
     train_args = (
         f"{ckpt_args} "
         f"{rollout_args} "
@@ -153,6 +166,7 @@ def execute(args: ScriptArgs):
         f"{sglang_args} "
         # f"{ci_args} "
         f"{misc_args} "
+        f"{profile_args} "
     )
 
     U.execute_train(
@@ -160,7 +174,9 @@ def execute(args: ScriptArgs):
         num_gpus_per_node=num_gpus,
         megatron_model_type=MODEL_TYPE,
         train_script="train_async.py",
-        extra_env_vars={"RAY_DEBUG": "1"},
+        extra_env_vars={"RAY_DEBUG": "1",
+                        **extra_env_vars,
+                        },
     )
 
 

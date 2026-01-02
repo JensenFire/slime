@@ -16,7 +16,8 @@ from slime.utils.timer import timer
 from ..megatron_to_hf import convert_to_hf
 from .common import all_gather_param, expert_named_params_and_buffers, non_expert_named_params_and_buffers
 from .remote_transfer_plan import RemoteTransferPlan
-
+from ....utils.profile_utils import FunctionStepProfiler
+import os
 
 class UpdateWeightFromRemote:
     """
@@ -45,7 +46,15 @@ class UpdateWeightFromRemote:
         self.transfer_plan = RemoteTransferPlan(args, model, weight_update_mode)
         self._is_source = self.transfer_plan.is_source()
         self.global_rank = dist.get_rank(group=get_gloo_group())
-
+        self.update_weight_profiler = None
+        self.update_weights_wrapped = None
+        if os.environ.get("UPDATE_WEIGHT_PROFILE", "0") == "1":
+            self.update_weight_profiler = FunctionStepProfiler(
+                self.args,
+                name="update_weights",
+                label="update_weights"
+            )
+            self.update_weights_wrapped = self.update_weight_profiler.wrap(self.update_weights_implementation)
     @abstractmethod
     def connect_rollout_engines(
         self, rollout_engines: Sequence[ActorHandle], rollout_engine_lock: ActorHandle
@@ -61,15 +70,15 @@ class UpdateWeightFromRemote:
         """
         Implementation of the bucketed parameter update from remote.
         """
-
+    
     @torch.no_grad()
-    def update_weights(self) -> None:
+    def update_weights_implementation(self,) -> None:
         """
         For each named parameter in the model, do bucketed weight update by all-gather EP/TP, convert and quantize,
         and relies on underlying implementation to do the transfer.
         """
         self.weight_version += 1
-
+        
         if dist.get_rank() == 0:
             ray.get([engine.pause_generation.remote() for engine in self.rollout_engines])
             ray.get([engine.flush_cache.remote() for engine in self.rollout_engines])
@@ -93,6 +102,14 @@ class UpdateWeightFromRemote:
         if dist.get_rank() == 0:
             self.leader_post_update()
         dist.barrier(group=get_gloo_group())
+
+    @torch.no_grad()
+    def update_weights(self) -> None:
+        if self.update_weights_wrapped is not None:
+            self.update_weights_wrapped()
+            # Don't call stop() here - let profiler accumulate steps across multiple calls
+        else:
+            self.update_weights_implementation()
 
     def leader_post_update(self) -> None:
         ray.get([engine.continue_generation.remote() for engine in self.rollout_engines])
@@ -125,7 +142,7 @@ class UpdateWeightFromRemote:
 
         if converted_named_tensors:
             self._update_bucket_weights_from_remote(converted_named_tensors, pbar=pbar)
-        # 
+    
     def _update_weight_from_remote(
         self,
         name: str,
