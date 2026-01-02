@@ -10,6 +10,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import ray
+
 from slime.utils.misc import exec_command
 from slime.utils.typer_utils import dataclass_cli
 
@@ -103,7 +105,8 @@ def execute_train(
     before_ray_job_submit=None,
     extra_env_vars=None,
     config: ExecuteTrainConfig | None = None,
-    
+    is_head_node: bool = True,
+    num_gpus: int | None = None,
 ):
     if extra_env_vars is None:
         extra_env_vars = {}
@@ -133,11 +136,30 @@ def execute_train(
     )
 
     if not external_ray:
-        exec_command(
-            # will prevent ray from buffering stdout/stderr
-            f"export PYTHONBUFFERED=16 && "
-            f"ray start --head --node-ip-address {master_addr} --num-gpus {num_gpus_per_node} --disable-usage-stats"
-        )
+        if is_head_node:
+            exec_command(
+                # will prevent ray from buffering stdout/stderr
+                f"export PYTHONBUFFERED=16 && "
+                f"ray start --head --node-ip-address {master_addr} --num-gpus {num_gpus_per_node} --disable-usage-stats"
+            )
+            # Check available GPUs in Ray cluster
+            if num_gpus is not None:
+                ray.init(address="auto", ignore_reinit_error=True)
+                available_gpus = ray.available_resources().get("GPU", 0)
+                while available_gpus < num_gpus:
+                    print(f"Ray cluster available GPUs: {available_gpus}, waiting for {num_gpus}...")
+                    time.sleep(3)
+                    available_gpus = ray.available_resources().get("GPU", 0)
+                print(f"Ray cluster available GPUs: {available_gpus}")
+                assert available_gpus == num_gpus, f"Expected {num_gpus} GPUs, got {available_gpus}"
+                ray.shutdown()
+            
+        else:
+            exec_command(
+                # will prevent ray from buffering stdout/stderr
+                f"export PYTHONBUFFERED=16 && "
+                f"ray start --address={master_addr}:6379 --num-gpus {num_gpus_per_node}"
+            )
 
     if (f := before_ray_job_submit) is not None:
         f()
@@ -177,18 +199,19 @@ def execute_train(
     if get_bool_env_var("SLIME_SCRIPT_ENABLE_RAY_SUBMIT", "1"):
         cmd_megatron_model_source = (
             f'source "{repo_base_dir}/scripts/models/{megatron_model_type}.sh" && '
-            if megatron_model_type is not None
+        if megatron_model_type is not None
             else ""
         )
-        exec_command(
-            f"export no_proxy=127.0.0.1 && export PYTHONBUFFERED=16 && "
-            f"{cmd_megatron_model_source}"
-            f'ray job submit --address="http://127.0.0.1:8265" '
-            f"--runtime-env-json='{runtime_env_json}' "
-            f"-- python3 {train_script} "
-            f"{'${MODEL_ARGS[@]}' if megatron_model_type is not None else ''} "
-            f"{train_args}"
-        )
+        if is_head_node: # only submit jobs from head node
+            exec_command(
+                f"export no_proxy=127.0.0.1 && export PYTHONBUFFERED=16 && "
+                f"{cmd_megatron_model_source}"
+                f'ray job submit --address="http://127.0.0.1:8265" '
+                f"--runtime-env-json='{runtime_env_json}' "
+                f"-- python3 {train_script} "
+                f"{'${MODEL_ARGS[@]}' if megatron_model_type is not None else ''} "
+                f"{train_args}"
+            )
 
 
 def _parse_extra_env_vars(text: str):

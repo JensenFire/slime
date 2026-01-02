@@ -11,6 +11,8 @@ GPUS_PER_NODE = 8
 # For h100 80g * 8:
 # training gpu cannot be only 1 because of oom
 
+# NODE 0: MASTER_ADDR=h100-003-001 python /root/slime/tests/test_weight_transfer_moe_multinode.py --is-multinodes 1 --is-head-node 1 --head-node-ip h100-003-001 --node-rank 0 --nnodes 2 2>&1 | tee temp2_moe.log
+# others: MASTER_ADDR=h100-003-001 python /root/slime/tests/test_weight_transfer_moe_multinode.py --is-multinodes 1 --is-head-node 0 --head-node-ip h100-003-001 --node-rank 1 --nnodes 2 2>&1 | tee temp2_moe.log
 
 @dataclass
 class ScriptArgs(U.ExecuteTrainConfig):
@@ -23,21 +25,21 @@ class ScriptArgs(U.ExecuteTrainConfig):
     # TODO: Right now ep=pp=1
     
     num_train_gpus: int = 8 # 1, 2, 4
-    num_rollout_gpus: int = 2 # 1, 2, 4
+    num_rollout_gpus: int = 8 # 1, 2, 4
     # training/rollout parallel
     training_tp_size: int = 8 #  1, 2, 4
-    rollout_tp_size: int = 2 #  1, 2, 4
-    colocate: int = 0
+    rollout_tp_size: int = 8 #  1, 2, 4
+
 
 
     use_pytorch_profiler_update_weight: int = 0
     # multi-node settings
-    is_multinodes: bool = False
-    is_head_node: bool = True
+    is_multinodes: int = 0
+    is_head_node: int = 1
     head_node_ip: str | None = None
     node_rank: int = 0
     nnodes: int = 1 
-
+    hardware: Literal["H100", "GB200", "GB300"] = "H100"
     # TODO:
     # parallelism: ep, pp
     
@@ -45,38 +47,44 @@ class ScriptArgs(U.ExecuteTrainConfig):
     # better performance
 
 def prepare(args: ScriptArgs):
-    U.exec_command("mkdir -p /root/models /root/datasets")
-    U.exec_command(
-        "hf download moonshotai/Moonlight-16B-A3B-Instruct --local-dir /root/models/Moonlight-16B-A3B-Instruct"
-    )
-    U.hf_download_dataset("zhuzilin/dapo-math-17k")
-    num_gpus = args.num_train_gpus + args.num_rollout_gpus if args.colocate !=1 else max(args.num_train_gpus, args.num_rollout_gpus)
-    if not args.is_multinodes:
+    if args.is_head_node == 1:
+        U.exec_command("mkdir -p /root/models /root/datasets")
+        U.exec_command(
+            "hf download moonshotai/Moonlight-16B-A3B-Instruct --local-dir /root/models/Moonlight-16B-A3B-Instruct"
+        )
+        U.hf_download_dataset("zhuzilin/dapo-math-17k")
+    num_gpus = args.num_train_gpus + args.num_rollout_gpus
+    if args.is_multinodes == 0:
         
         U.convert_checkpoint(model_name=MODEL_NAME, megatron_model_type=MODEL_TYPE, num_gpus_per_node=num_gpus)
     else:
-        if args.num_train_gpus > GPUS_PER_NODE:
-            assert args.num_train_gpus % GPUS_PER_NODE == 0, "num_train_gpus must be multiple of GPUS_PER_NODE" 
+        # NOTE: currently when it comes to multinode case, all gpus of training/rollout should be multiple of GPUS_PER_NODE 
+        assert args.num_train_gpus % GPUS_PER_NODE == 0, "num_train_gpus must be multiple of GPUS_PER_NODE"
+        assert args.num_rollout_gpus % GPUS_PER_NODE == 0, "num_rollout_gpus must be multiple of GPUS_PER_NODE"
         # Convert training/rollout nodes separately
-        assert args.num_train_gpus % args.num_rollout_gpus == 0 or args.num_rollout_gpus % args.num_train_gpus == 0 
+        # assert args.num_train_gpus % args.num_rollout_gpus == 0 or args.num_rollout_gpus % args.num_train_gpus == 0 
         U.convert_checkpoint(
             model_name=MODEL_NAME, megatron_model_type=MODEL_TYPE, 
-            num_gpus_per_node= min(GPUS_PER_NODE, min(args.num_rollout_gpus, args.num_train_gpus) ),
+            num_gpus_per_node=GPUS_PER_NODE,
             multinode=True,
             master_addr=args.head_node_ip,
             nnodes=args.nnodes,
+            dir_dst="/root/multinode",
             node_rank=args.node_rank,
         )
 
 
 def execute(args: ScriptArgs):
     if args.is_multinodes:
-        num_gpus= min(GPUS_PER_NODE, min(args.num_rollout_gpus, args.num_train_gpus))
-    elif args.colocate == 1:
-        num_gpus = max(args.num_train_gpus, args.num_rollout_gpus)
+        assert args.num_train_gpus % GPUS_PER_NODE == 0, "num_train_gpus must be multiple of GPUS_PER_NODE"
+        assert args.num_rollout_gpus % GPUS_PER_NODE == 0, "num_rollout_gpus must be multiple of GPUS_PER_NODE"
+        num_gpus_per_node = 8
+        ckpt_args = f"--hf-checkpoint /root/models/{MODEL_NAME}/ " f"--ref-load /root/multinode/{MODEL_NAME}_torch_dist "
     else:
-        num_gpus = args.num_train_gpus + args.num_rollout_gpus    
-    ckpt_args = f"--hf-checkpoint /root/models/{MODEL_NAME}/ " f"--ref-load /root/{MODEL_NAME}_torch_dist "
+        num_gpus_per_node = args.num_train_gpus + args.num_rollout_gpus
+        ckpt_args = f"--hf-checkpoint /root/models/{MODEL_NAME}/ " f"--ref-load /root/{MODEL_NAME}_torch_dist "
+    num_gpus = args.num_train_gpus + args.num_rollout_gpus
+    
 
     rollout_args = (
         "--prompt-data /root/datasets/dapo-math-17k/dapo-math-17k.jsonl "
@@ -151,7 +159,6 @@ def execute(args: ScriptArgs):
         # 1GB buffer for weight update
         f"--update-weight-buffer-size {1 * 1024 ** 3} "
         f"--check-weight-update-equal "
-        f"--colocate " if args.colocate == 1 else "" 
     )
     if args.mode == "rdma":
         misc_args += "--update-weight-transfer-mode rdma "
@@ -182,12 +189,14 @@ def execute(args: ScriptArgs):
 
     U.execute_train(
         train_args=train_args,
-        num_gpus_per_node=num_gpus,
+        num_gpus_per_node=num_gpus_per_node,
         megatron_model_type=MODEL_TYPE,
-        # train_script="train_async.py",
+        train_script="train_async.py",
         extra_env_vars={"RAY_DEBUG": "1",
                         **extra_env_vars,
                         },
+        is_head_node=bool(args.is_head_node == 1),
+        num_gpus = num_gpus,
     )
 
 
