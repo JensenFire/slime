@@ -461,14 +461,12 @@ def _allocate_rollout_engine_addr_and_ports_normal(*, args, num_engines, rollout
             all_server_node_hosts[server_id][node_rank] = get_addr()
         
         engine_id = rank // num_engines_per_node
-        if engine_id in visited_servers:
+        if engine_id in visited_nodes:
             continue
         visited_nodes.add(engine_id)
         # TODO: currently when restarting engines, we will set port for all engines on this node starting with this rank.
         # e.g. for 8 gpus, if we are restarting engine on gpu 3, we will set port for engine 3,4,5,6,7 on this node.
         num_engines_on_this_node = num_engines_per_node - (rank % num_engines_per_node)
-
-      
 
         for i in range(num_engines_on_this_node):
             addr_and_ports[rank + i]["host"] = get_addr()
