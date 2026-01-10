@@ -429,22 +429,6 @@ def _allocate_rollout_engine_addr_and_ports_normal(*, args, num_engines, rollout
     visited_nodes = set()
     all_server_node_hosts = {} # {server_id: [(node_rank, address)]  }, server_id = rank // num_engines_per_node
     for rank, engine in rollout_engines:
-        # add node_rank and address into the dict for multi-node scenarios
-        if nnodes > 1:
-            server_id = rank // nnodes
-            all_server_node_hosts[server_id] = all_server_node_hosts.get(server_id, {})
-            node_rank = rank % nnodes
-            assert node_rank not in all_server_node_hosts[server_id], f"Duplicate node rank {node_rank} for server {server_id}"
-            all_server_node_hosts[server_id][node_rank] = get_addr()
-        
-        engine_id = rank // num_engines_per_node
-        if engine_id in visited_servers:
-            continue
-        visited_nodes.add(engine_id)
-        # TODO: currently when restarting engines, we will set port for all engines on this node starting with this rank.
-        # e.g. for 8 gpus, if we are restarting engine on gpu 3, we will set port for engine 3,4,5,6,7 on this node.
-        num_engines_on_this_node = num_engines_per_node - (rank % num_engines_per_node)
-
         def get_addr_and_ports(engine):
             # use small ports to prevent ephemeral port between 32768 and 65536.
             # also, ray uses port 10002-19999, thus we avoid near-10002 to avoid racing condition
@@ -465,7 +449,25 @@ def _allocate_rollout_engine_addr_and_ports_normal(*, args, num_engines, rollout
                 addr, _ = ray.get(engine._get_current_node_ip_and_free_port.remote())
                 return addr
 
-            return addr, port
+            return addr, port        
+        
+        # add node_rank and address into the dict for multi-node scenarios
+        if nnodes > 1:
+            server_id = rank // nnodes
+            all_server_node_hosts[server_id] = all_server_node_hosts.get(server_id, {})
+            node_rank = rank % nnodes
+            assert node_rank not in all_server_node_hosts[server_id], f"Duplicate node rank {node_rank} for server {server_id}"
+            all_server_node_hosts[server_id][node_rank] = get_addr()
+        
+        engine_id = rank // num_engines_per_node
+        if engine_id in visited_servers:
+            continue
+        visited_nodes.add(engine_id)
+        # TODO: currently when restarting engines, we will set port for all engines on this node starting with this rank.
+        # e.g. for 8 gpus, if we are restarting engine on gpu 3, we will set port for engine 3,4,5,6,7 on this node.
+        num_engines_on_this_node = num_engines_per_node - (rank % num_engines_per_node)
+
+      
 
         get_addr, get_port = get_addr_and_ports(engine)
 
