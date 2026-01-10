@@ -496,7 +496,7 @@ def _allocate_rollout_engine_addr_and_ports_normal(*, args, num_engines, rollout
     for i, _ in rollout_engines:
         if nnodes > 1:
             server_id = i // nnodes
-            addr_and_ports[i]["node_hosts"] = node_host_addr_per_server[server_id]
+            addr_and_ports[i]["node_hosts"] = node_host_addr_str[server_id]
         for key in ["port", "nccl_port", "dist_init_addr"]:
             assert key in addr_and_ports[i], f"Engine {i} {key} is not set."
         logger.info(f"Ports for engine {i}: {addr_and_ports[i]}")
