@@ -6,6 +6,7 @@ import time
 from glob import glob
 from pathlib import Path
 from typing import Any
+import json
 
 import numpy as np
 import ray
@@ -427,7 +428,7 @@ def _allocate_rollout_engine_addr_and_ports_normal(*, args, num_engines, rollout
     addr_and_ports = [{} for _ in range(num_engines)]
 
     visited_nodes = set()
-    all_server_node_hosts = {} # {server_id: [(node_rank, address)]  }, server_id = rank // num_engines_per_node
+    all_server_node_hosts = {} # {server_id: {node_rank:address}  }, server_id = rank // num_engines_per_node
     for rank, engine in rollout_engines:
         def get_addr_and_ports(engine):
             # use small ports to prevent ephemeral port between 32768 and 65536.
@@ -486,12 +487,9 @@ def _allocate_rollout_engine_addr_and_ports_normal(*, args, num_engines, rollout
     
     node_host_addr_str = {}
     if nnodes > 1:
-        # {server_id: "addr1,addr2,..."}
         for server_id, node_rank_addr_dict in all_server_node_hosts.items():
-            node_rank_addr_list = list(node_rank_addr_dict.items())
-            node_rank_addr_list = sorted(node_rank_addr_list, key=lambda x: x[0]) # sorted by node_rank
-            assert node_rank_addr_list[-1][0] == nnodes - 1, f"server {server_id} missing node address {node_rank_addr_list}"
-            node_host_addr_str[server_id] = ",".join([x[1] for x in node_rank_addr_list])
+            assert len(node_rank_addr_dict) == nnodes - 1, f"server {server_id} missing node address {node_rank_addr_dict}"
+            node_host_addr_str[server_id] = json.dumps(node_rank_addr_dict)
     
     for i, _ in rollout_engines:
         if nnodes > 1:
