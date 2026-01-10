@@ -450,7 +450,8 @@ def _allocate_rollout_engine_addr_and_ports_normal(*, args, num_engines, rollout
                 return addr
 
             return addr, port        
-        
+        get_addr, get_port = get_addr_and_ports(engine)
+
         # add node_rank and address into the dict for multi-node scenarios
         if nnodes > 1:
             server_id = rank // nnodes
@@ -468,8 +469,6 @@ def _allocate_rollout_engine_addr_and_ports_normal(*, args, num_engines, rollout
         num_engines_on_this_node = num_engines_per_node - (rank % num_engines_per_node)
 
       
-
-        get_addr, get_port = get_addr_and_ports(engine)
 
         for i in range(num_engines_on_this_node):
             addr_and_ports[rank + i]["host"] = get_addr()
