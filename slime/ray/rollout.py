@@ -488,7 +488,7 @@ def _allocate_rollout_engine_addr_and_ports_normal(*, args, num_engines, rollout
     node_host_addr_str = {}
     if nnodes > 1:
         for server_id, node_rank_addr_dict in all_server_node_hosts.items():
-            assert len(node_rank_addr_dict) == nnodes - 1, f"server {server_id} missing node address {node_rank_addr_dict}"
+            assert len(node_rank_addr_dict) == nnodes, f"server {server_id} missing node address {node_rank_addr_dict}"
             node_host_addr_str[server_id] = json.dumps(node_rank_addr_dict)
     
     for i, _ in rollout_engines:
