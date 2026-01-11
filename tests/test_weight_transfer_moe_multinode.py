@@ -26,7 +26,7 @@ class ScriptArgs(U.ExecuteTrainConfig):
     train_etp: int = 8
     sglang_tp: int = 8  # NOTE: for sglang, moe_tp_size = tp_size // ep_size
     sglang_dp: int = 1
-    sglang_ep: int = 8
+    sglang_ep: int = 1
     sglang_pp: int = 1
     # Total Ressources
     num_train_gpus: int = 8
